@@ -1,0 +1,17 @@
+{
+  "name": "csce3550-jwks-server",
+  "version": "1.0.0",
+  "description": "A basic JWKS server for CSCE 3550 Project 1",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "coverage": "node --test --experimental-test-coverage",
+    "lint": "node --check src/server.js && node --check test/server.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
