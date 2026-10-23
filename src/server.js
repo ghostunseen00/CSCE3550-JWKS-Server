@@ -2,6 +2,7 @@
 
 const http = require('node:http');
 const crypto = require('node:crypto');
+const { openStore } = require('./storage');
 
 const PORT = Number(process.env.PORT || 8080);
 const ISSUER = 'csce3550-jwks-server';
@@ -21,7 +22,7 @@ function createKey(expired = false) {
     kid,
     publicKey,
     privateKey,
-    expiresAt: expired ? now - 3600 : now + 3600,
+    expiresAt: expired ? now - 3600 : now + 7200,
   };
 }
 
@@ -41,10 +42,10 @@ function signJwt(key, expired = false) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'RS256', typ: 'JWT', kid: key.kid };
   const payload = {
-    sub: 'fake-user',
+    sub: 'userABC',
     iss: ISSUER,
     iat: expired ? now - 7200 : now,
-    exp: expired ? key.expiresAt : now + 3600,
+    exp: key.expiresAt,
   };
   const signingInput = `${toBase64Url(JSON.stringify(header))}.${toBase64Url(JSON.stringify(payload))}`;
   const signature = crypto.sign('RSA-SHA256', Buffer.from(signingInput), key.privateKey);
@@ -61,8 +62,11 @@ function sendJson(response, statusCode, body) {
 }
 
 function createApp(options = {}) {
-  const validKey = options.validKey || createKey(false);
-  const expiredKey = options.expiredKey || createKey(true);
+  const store = openStore(options.dbPath);
+  const now = Math.floor(Date.now() / 1000);
+  // Preserve existing keys across restarts; replenish only missing categories.
+  if (!store.select(false, now + 3600)) store.insert(createKey(false));
+  if (!store.select(true, now)) store.insert(createKey(true));
 
   const handler = (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
@@ -73,9 +77,7 @@ function createApp(options = {}) {
         return;
       }
       const now = Math.floor(Date.now() / 1000);
-      const keys = [validKey, expiredKey]
-        .filter((key) => key.expiresAt > now)
-        .map(publicJwk);
+      const keys = store.valid(now).map(publicJwk);
       sendJson(response, 200, { keys });
       return;
     }
@@ -86,7 +88,13 @@ function createApp(options = {}) {
         return;
       }
       const wantsExpiredToken = url.searchParams.has('expired');
-      const selectedKey = wantsExpiredToken ? expiredKey : validKey;
+      const selectedKey = store.select(wantsExpiredToken, Math.floor(Date.now() / 1000));
+      if (!selectedKey) {
+        sendJson(response, 503, { error: 'No matching signing key available' });
+        return;
+      }
+      // Authentication is mocked: Basic credentials and JSON bodies are accepted.
+      request.resume();
       response.writeHead(200, { 'Content-Type': 'application/jwt' });
       response.end(signJwt(selectedKey, wantsExpiredToken));
       return;
@@ -95,12 +103,13 @@ function createApp(options = {}) {
     sendJson(response, 404, { error: 'Not Found' });
   };
 
-  return { handler, validKey, expiredKey };
+  return { handler, store, close: () => store.close() };
 }
 
-function startServer(port = PORT) {
-  const app = createApp();
+function startServer(port = PORT, options = {}) {
+  const app = createApp(options);
   const server = http.createServer(app.handler);
+  server.on('close', app.close);
   server.listen(port, () => {
     console.log(`JWKS server listening on http://localhost:${port}`);
   });

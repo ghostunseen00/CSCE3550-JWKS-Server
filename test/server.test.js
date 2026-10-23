@@ -19,7 +19,9 @@ function decodeJwt(token) {
 }
 
 before(async () => {
-  app = createApp();
+  app = createApp({ dbPath: ':memory:' });
+  app.validKey = app.store.select(false, Math.floor(Date.now() / 1000));
+  app.expiredKey = app.store.select(true, Math.floor(Date.now() / 1000));
   server = http.createServer(app.handler);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -27,6 +29,7 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
+  app.close();
 });
 
 describe('JWKS endpoint', () => {
@@ -56,7 +59,7 @@ describe('authentication endpoint', () => {
     assert.equal(header.kid, app.validKey.kid);
     assert.equal(header.alg, 'RS256');
     assert.ok(payload.exp > Math.floor(Date.now() / 1000));
-    assert.equal(payload.sub, 'fake-user');
+    assert.equal(payload.sub, 'userABC');
     assert.equal(crypto.verify('RSA-SHA256', Buffer.from(token.split('.').slice(0, 2).join('.')), app.validKey.publicKey, Buffer.from(token.split('.')[2], 'base64url')), true);
   });
 
@@ -84,4 +87,24 @@ test('helper functions expose a public JWK and create signed tokens', () => {
   const token = signJwt(app.validKey);
   assert.equal(jwk.kty, 'RSA');
   assert.equal(token.split('.').length, 3);
+});
+
+
+test('Basic and JSON mock credentials both return signed tokens', async () => {
+  for (const options of [
+    { headers: { Authorization: 'Basic ' + Buffer.from('userABC:password123').toString('base64') } },
+    { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'userABC', password: 'password123' }) },
+  ]) {
+    const response = await fetch(`${baseUrl}/auth`, { method: 'POST', ...options });
+    assert.equal(response.status, 200);
+    assert.equal(decodeJwt(await response.text()).payload.sub, 'userABC');
+  }
+});
+
+test('expired parameter is triggered by presence, including false and empty', async () => {
+  for (const query of ['expired', 'expired=false', 'expired=%27%20OR%201=1--']) {
+    const response = await fetch(`${baseUrl}/auth?${query}`, { method: 'POST' });
+    assert.equal(decodeJwt(await response.text()).header.kid, app.expiredKey.kid);
+  }
+  assert.equal(app.store.valid(Math.floor(Date.now() / 1000)).length, 1);
 });

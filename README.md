@@ -1,66 +1,63 @@
-# CSCE 3550 Project 1 — JWKS Server
+# CSCE 3550 Project 2 — SQLite JWKS Server
 
 Author: Gerald Cofie  
 Course: CSCE 3550 — Foundations of Cybersecurity
 
-This Node.js project implements a basic RESTful JWKS server. It generates one valid and one expired 2048-bit RSA key pair, assigns each a unique `kid`, serves only the valid public key, and issues either a valid or expired RS256 JWT.
+## Setup
+Install Node.js 22.13 or newer (Node.js 24 LTS recommended). No external packages are needed. From the project folder run:
 
-## Requirements
-
-- Node.js 20 or later
-- No third-party packages are required
-
-## Run the server
-
-```bash
+```text
 npm start
 ```
 
-The server listens on `http://localhost:8080`.
+The server listens on http://localhost:8080 and creates `totally_not_my_privateKeys.db` in the current working directory.
 
-## Endpoints
+## API
+- `GET /.well-known/jwks.json`: public JWKs for every database key with exp greater than the current Unix timestamp.
+- `POST /auth`: RS256 JWT signed with an unexpired database key.
+- `POST /auth?expired`: JWT signed with an expired database key. Parameter presence triggers this even for `expired=false`.
 
-| Method | Endpoint | Result |
-| --- | --- | --- |
-| `GET` | `/.well-known/jwks.json` | Returns unexpired public keys in JWKS format |
-| `POST` | `/auth` | Returns a valid signed JWT |
-| `POST` | `/auth?expired=true` | Returns an expired JWT signed by the expired key |
+Authentication is mocked. Basic auth and JSON credentials are accepted without verification; the subject is `userABC`. Unsupported methods return 405; unknown paths return 404; unavailable signing keys return 503.
 
-Unsupported methods return `405 Method Not Allowed`. Unknown routes return `404 Not Found`.
+## Storage and SQL safety
+The exact required schema is created on startup:
 
-## Run tests and coverage
+```sql
+CREATE TABLE IF NOT EXISTS keys(
+    kid INTEGER PRIMARY KEY AUTOINCREMENT,
+    key BLOB NOT NULL,
+    exp INTEGER NOT NULL
+);
+```
 
-```bash
+RSA private keys are stored as PKCS1 PEM BLOBs. Database IDs become string JWT/JWK kid values. All inserted and queried values use bound parameters. No request input is interpolated into SQL. Public responses never contain private key fields.
+
+Startup preserves stored keys and adds an expired key if absent and a new key if none remains valid for at least another hour. New valid keys last two hours. Each request reads from SQLite; JWT expiration equals the selected key expiration. The database is local development data and is excluded from Git.
+
+## Tests
+```text
 npm test
 npm run coverage
 npm run lint
 ```
 
-## Black-box client
+Tests cover signatures, Basic/JSON mock requests, expired query presence, HTTP methods, persistence across restarts, PKCS1 BLOB storage, multiple valid keys, expiry boundary, and unavailable keys. Coverage enforces more than 80% for lines, branches, and functions. `lint` currently performs Node syntax checks on all source/test files.
 
-1. Download the correct test client for Windows from the release link supplied in Canvas.
-2. Open one terminal in this repository and run `npm start`.
-3. Open a second terminal and run the downloaded test client against `http://localhost:8080` using its documented command.
-4. Capture the full passing output with the identifying-information banner below visible.
+Verified on Node.js 24.19.0: 13 tests passed; line coverage 98.82%, branch coverage 97.30%, function coverage 100%. See `coverage-output.txt` for actual output.
 
-## Required screenshots
+## Gradebot and submission evidence
+Run the instructor-provided test client with its `project2` command from this project directory while the server runs in a second terminal. Both must use this directory so the client can access the database. Use the instructor's documented executable/flags; the client is not included here and has not been run for this update.
 
-Before each screenshot, run this in Command Prompt:
-
+Before capturing screenshots in Windows Command Prompt, print:
 ```text
-echo Gerald Cofie - CSCE 3550 - Project 1
+echo Gerald Cofie - CSCE 3550 - Project 2
 ```
 
-Include these image files in the repository:
+Add real screenshots to `screenshots/`:
+- `gradebot-project2.png`: Gradebot rubric table and awarded points with identification visible.
+- `coverage-project2.png`: `npm run coverage` output with identification visible.
 
-- `screenshots/blackbox-test.png` — official test client passing against the running server.
-- `screenshots/coverage.png` — `npm run coverage` showing coverage above 80%.
+Do not reuse Project 1 evidence. Old screenshots are retained under `screenshots/project1/` only as historical evidence. Project 2 is not submission-ready until the new screenshots and official test are completed. Submit the github.com repository URL in Canvas.
 
-Do not submit placeholder screenshots. Add the actual screenshots after running the project on your computer.
-
-## Design notes
-
-- RSA private keys remain server-side and are never included in JWKS output.
-- Every JWT header contains the `kid` of the signing key.
-- The JWKS endpoint filters keys by expiry time.
-- Query-parameter presence triggers the expired-token behavior, as required.
+## AI acknowledgement
+OpenAI ChatGPT assisted with the SQLite extension, tests, and documentation. Gerald Cofie should review and understand the implementation before submission.
